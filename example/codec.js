@@ -4,12 +4,11 @@ const data = open("example.json");
 const protoFile = protobuf.load("example/v1/example.proto", "CountryList")
 
 export default function () {
-    //console.log(protoFile.decodeDelimited(protoFile.encodeDelimited(data)))
 
-    //console.log(protoFile.decode(protoFile.encode(data)))
+    // Normal encoding decoding
+    console.log(protoFile.decode(protoFile.encode(data)))
 
-    console.log(protoFile.encodeDelimited(data));
-
-    console.log(protoFile.encode(data))
+    // Delimited encoding decoding
+    console.log(protoFile.decodeDelimited(protoFile.encodeDelimited(data)))
 }
 
