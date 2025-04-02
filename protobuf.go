@@ -1,8 +1,11 @@
 package protobuf
 
 import (
+	"bytes"
 	"context"
-	"log"
+	"encoding/binary"
+	"fmt"
+	"io"
 
 	"github.com/bufbuild/protocompile"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -23,59 +26,101 @@ type ProtoFile struct {
 	messageDesc protoreflect.MessageDescriptor
 }
 
-func (p *Protobuf) Load(protoFilePath, lookupType string) ProtoFile {
+// Load a .proto file and find the requested message type
+func (p *Protobuf) Load(protoFilePath, lookupType string) (ProtoFile, error) {
 	compiler := protocompile.Compiler{
 		Resolver: &protocompile.SourceResolver{},
 	}
 
 	files, err := compiler.Compile(context.Background(), protoFilePath)
 	if err != nil {
-		log.Fatal(err)
-	}
-	if files == nil {
-		log.Fatal("No files were passed as arguments")
+		return ProtoFile{}, fmt.Errorf("failed to compile proto file: %w", err)
 	}
 	if len(files) == 0 {
-		log.Fatal("Zero files were parsed")
+		return ProtoFile{}, fmt.Errorf("no protobuf files were compiled")
 	}
 
-	return ProtoFile{files[0].Messages().ByName(protoreflect.Name(lookupType))}
+	messageDesc := files[0].Messages().ByName(protoreflect.Name(lookupType))
+	if messageDesc == nil {
+		return ProtoFile{}, fmt.Errorf("message type '%s' not found", lookupType)
+	}
+
+	return ProtoFile{messageDesc}, nil
 }
 
-func (p *ProtoFile) Encode(data string) []byte {
+// Encode JSON to protobuf binary format
+func (p *ProtoFile) Encode(data string) ([]byte, error) {
 	dynamicMessage := dynamicpb.NewMessage(p.messageDesc)
 
-	err := protojson.Unmarshal([]byte(data), dynamicMessage)
-
-	if err != nil {
-		log.Fatal(err)
+	if err := protojson.Unmarshal([]byte(data), dynamicMessage); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
 	}
 
 	encodedBytes, err := proto.Marshal(dynamicMessage)
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("failed to marshal protobuf: %w", err)
 	}
 
-	return encodedBytes
+	return encodedBytes, nil
 }
 
-func (p *ProtoFile) Decode(decodedBytes []byte) string {
+// Decode protobuf binary format back to JSON
+func (p *ProtoFile) Decode(encodedBytes []byte) (string, error) {
+	dynamicMessage := dynamicpb.NewMessage(p.messageDesc)
 
-	decodedMessage := dynamicpb.NewMessage(p.messageDesc)
+	if err := proto.Unmarshal(encodedBytes, dynamicMessage); err != nil {
+		return "", fmt.Errorf("failed to unmarshal protobuf: %w", err)
+	}
 
-	err := proto.Unmarshal(decodedBytes, decodedMessage)
+	marshalOptions := protojson.MarshalOptions{UseProtoNames: true}
+
+	jsonString, err := marshalOptions.Marshal(dynamicMessage)
 	if err != nil {
-		log.Fatal(err)
+		return "", fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	marshalOptions := protojson.MarshalOptions{
-		UseProtoNames: true,
-	}
+	return string(jsonString), nil
+}
 
-	jsonString, err := marshalOptions.Marshal(decodedMessage)
+// Encode a protobuf message with a length prefix (Delimited Encoding)
+func (p *ProtoFile) EncodeDelimited(data string) ([]byte, error) {
+	encodedBytes, err := p.Encode(data)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
-	return string(jsonString)
+	// Create a buffer to store the length-prefixed message
+	var buf bytes.Buffer
+
+	// Write the length as a varint
+	if err := binary.Write(&buf, binary.LittleEndian, uint64(len(encodedBytes))); err != nil {
+		return nil, fmt.Errorf("failed to write length prefix: %w", err)
+	}
+
+	// Write the actual encoded message
+	if _, err := buf.Write(encodedBytes); err != nil {
+		return nil, fmt.Errorf("failed to write message: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// Decode a length-prefixed (delimited) protobuf message
+func (p *ProtoFile) DecodeDelimited(delimitedBytes []byte) (string, error) {
+	buf := bytes.NewReader(delimitedBytes)
+
+	// Read the length prefix
+	var length uint64
+	if err := binary.Read(buf, binary.LittleEndian, &length); err != nil {
+		return "", fmt.Errorf("failed to read length prefix: %w", err)
+	}
+
+	// Read the actual protobuf message
+	messageBytes := make([]byte, length)
+	if _, err := io.ReadFull(buf, messageBytes); err != nil {
+		return "", fmt.Errorf("failed to read full message: %w", err)
+	}
+
+	// Decode the message
+	return p.Decode(messageBytes)
 }
