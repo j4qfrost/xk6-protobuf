@@ -1,4 +1,4 @@
-module github.com/ribeirof1/xk6-protobuf
+module github.com/j4qfrost/xk6-protobuf
 
 go 1.21
 
