@@ -27,9 +27,9 @@ type ProtoFile struct {
 }
 
 // Load a .proto file and find the requested message type
-func (p *Protobuf) Load(protoFilePath, lookupType string) (ProtoFile, error) {
+func (p *Protobuf) Load(importPaths []string, protoFilePath, lookupType string) (ProtoFile, error) {
 	compiler := protocompile.Compiler{
-		Resolver: &protocompile.SourceResolver{},
+		Resolver: &protocompile.SourceResolver{ImportPaths: importPaths},
 	}
 
 	files, err := compiler.Compile(context.Background(), protoFilePath)
